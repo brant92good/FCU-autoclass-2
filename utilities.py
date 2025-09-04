@@ -144,3 +144,109 @@ def get_ocr_answer(ocr_image_path):
     except Exception as e:
         log_error(f"OCR 辨識失敗: {e}")
         return ""
+
+
+def safe_handle_alert(driver, timeout=3):
+    """Safely handle alert with timeout and proper error handling.
+    
+    :param driver: Selenium WebDriver instance
+    :param timeout: Maximum time to wait for alert
+    :return: Alert text if found, None if no alert
+    """
+    try:
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.common.exceptions import TimeoutException, NoAlertPresentException
+        
+        # Wait for alert to be present
+        alert = WebDriverWait(driver, timeout).until(EC.alert_is_present())
+        alert_text = alert.text
+        log_info(f"Alert detected: {alert_text}")
+        alert.accept()
+        return alert_text
+    except TimeoutException:
+        log_warning("No alert found within timeout period")
+        return None
+    except NoAlertPresentException:
+        log_warning("No alert present")
+        return None
+    except Exception as e:
+        log_error(f"Error handling alert: {e}")
+        # Try to dismiss any remaining alert
+        try:
+            driver.switch_to.alert.accept()
+        except:
+            pass
+        return None
+
+
+def dismiss_any_alert(driver):
+    """Dismiss any existing alert without waiting.
+    
+    :param driver: Selenium WebDriver instance
+    :return: True if alert was dismissed, False otherwise
+    """
+    try:
+        alert = driver.switch_to.alert
+        alert_text = alert.text
+        log_info(f"Dismissing existing alert: {alert_text}")
+        alert.accept()
+        return True
+    except Exception:
+        # No alert present, which is fine
+        return False
+
+
+def safe_element_interaction(driver, locator, action, *args, max_retries=3):
+    """Safely interact with element, handling stale element references.
+    
+    :param driver: Selenium WebDriver instance
+    :param locator: Element locator
+    :param action: Action to perform ('click', 'send_keys', 'get_text', 'clear')
+    :param args: Arguments for the action
+    :param max_retries: Maximum number of retries
+    :return: Result of action or None if failed
+    """
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
+    
+    for attempt in range(max_retries):
+        try:
+            # Re-find the element each time to avoid stale reference
+            element = WebDriverWait(driver, 10).until(EC.presence_of_element_located(locator))
+            
+            if action == 'click':
+                element.click()
+                return True
+            elif action == 'send_keys':
+                if len(args) > 0:
+                    # Only clear if it's an input or textarea element, not radio buttons or checkboxes
+                    element_type = element.get_attribute('type')
+                    if element_type not in ['radio', 'checkbox']:
+                        element.clear()
+                    element.send_keys(args[0])
+                    return True
+            elif action == 'get_text':
+                return element.text
+            elif action == 'clear':
+                element.clear()
+                return True
+                
+        except StaleElementReferenceException:
+            log_warning(f"Stale element detected, retrying ({attempt + 1}/{max_retries})")
+            if attempt < max_retries - 1:
+                import time
+                time.sleep(0.5)
+                continue
+            else:
+                log_error(f"Failed to interact with element after {max_retries} attempts")
+                return None
+        except TimeoutException:
+            log_error(f"Element not found: {locator}")
+            return None
+        except Exception as e:
+            log_error(f"Unexpected error in element interaction: {e}")
+            return None
+    
+    return None

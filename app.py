@@ -7,7 +7,7 @@ import atexit
 from os.path import exists
 
 from selenium import webdriver
-from selenium.common import TimeoutException
+from selenium.common import TimeoutException, NoAlertPresentException
 from selenium.webdriver import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as ec
@@ -111,7 +111,13 @@ def driver_send_keys(locator, key):
     :param locator: Locator of element.
     :param key: Keys to send.
     """
-    WebDriverWait(driver, 10).until(ec.presence_of_element_located(locator)).send_keys(key)
+    # Clear any alerts first
+    utils.dismiss_any_alert(driver)
+    
+    # Use safe element interaction to handle stale elements
+    result = utils.safe_element_interaction(driver, locator, 'send_keys', key)
+    if not result:
+        raise Exception(f"Failed to send keys to element: {locator}")
 
 
 def driver_click(locator):
@@ -119,7 +125,13 @@ def driver_click(locator):
 
     :param locator: Locator of element.
     """
-    WebDriverWait(driver, 10).until(ec.presence_of_element_located(locator)).click()
+    # Clear any alerts before clicking to avoid interference
+    utils.dismiss_any_alert(driver)
+    
+    # Use safe element interaction to handle stale elements
+    result = utils.safe_element_interaction(driver, locator, 'click')
+    if not result:
+        raise Exception(f"Failed to click element: {locator}")
 
 
 def driver_screenshot(locator, path):
@@ -137,7 +149,11 @@ def driver_get_text(locator):
     :param locator: Locator of element.
     :return: Text of element.
     """
-    return WebDriverWait(driver, 10).until(ec.presence_of_element_located(locator)).text
+    # Use safe element interaction to handle stale elements
+    result = utils.safe_element_interaction(driver, locator, 'get_text')
+    if result is None:
+        raise Exception(f"Failed to get text from element: {locator}")
+    return result
 
 
 def check_and_close_popup():
@@ -183,7 +199,7 @@ def login():
             driver.get('https://course.fcu.edu.tw/')
             utils.log_info("已開啟課程系統網頁")
             
-            driver_send_keys((By.XPATH, '//*[@id="ctl00_Login1_RadioButtonList1_0"]'), Keys.SPACE)
+            driver_click((By.XPATH, '//*[@id="ctl00_Login1_RadioButtonList1_0"]'))
             utils.log_info("已選擇學生身分")
             
             driver_send_keys((By.ID, "ctl00_Login1_UserName"), config.get("username"))
@@ -303,37 +319,62 @@ def auto_class(class_ids):
             for class_id in class_ids[:]:  # create a copy of class_ids for iteration
                 try:
                     utils.log_info(f"正在處理課程: {class_id}")
-                    driver_send_keys((By.ID, "ctl00_MainContent_TabContainer1_tabSelected_tbSubID"),
-                                     class_id)
+                    
+                    # Clear any existing alerts before proceeding
+                    utils.dismiss_any_alert(driver)
+                    
+                    # Refresh the page elements by clicking the tab again
+                    time.sleep(0.3)  # Small delay to ensure page stability
+                    
+                    # Re-locate and clear the input field, then send new course ID
+                    try:
+                        driver_send_keys((By.ID, "ctl00_MainContent_TabContainer1_tabSelected_tbSubID"),
+                                         class_id)
+                    except Exception as input_error:
+                        utils.log_warning(f"輸入課程ID失敗，重試中: {input_error}")
+                        # Try to click the tab again to refresh elements
+                        driver_click((By.ID, "ctl00_MainContent_TabContainer1_tabSelected_Label3"))
+                        time.sleep(0.5)
+                        driver_send_keys((By.ID, "ctl00_MainContent_TabContainer1_tabSelected_tbSubID"),
+                                         class_id)
 
                     # query remain position
                     utils.log_info(f"查詢課程 {class_id} 剩餘名額...")
                     driver_click((By.XPATH,
                                   "//*[@id='ctl00_MainContent_TabContainer1_tabSelected_gvToAdd']/tbody/tr[2]/td[8]/input"))
-                    time.sleep(0.5)
-                    alert = driver.switch_to.alert
-                    remain_pos = int(alert.text.strip('剩餘名額/開放名額：').split(" /")[0])
-                    utils.log_info(f"課程 {class_id}: {alert.text}")
-                    print("課程" + class_id + ": " + alert.text)
-                    alert.accept()
+                    
+                    # Use safer alert handling
+                    alert_text = utils.safe_handle_alert(driver, timeout=5)
+                    
+                    if alert_text:
+                        try:
+                            # Parse the alert text to get remaining positions
+                            remain_pos = int(alert_text.strip('剩餘名額/開放名額：').split(" /")[0])
+                            utils.log_info(f"課程 {class_id}: {alert_text}")
+                            print("課程" + class_id + ": " + alert_text)
 
-                    if not remain_pos == 0:
-                        utils.log_info(f"課程 {class_id} 有名額，嘗試加選...")
-                        driver_click((By.XPATH,
-                                      "//*[@id='ctl00_MainContent_TabContainer1_tabSelected_gvToAdd']/tbody/tr[2]/td[1]/input"))
-                        result_text = driver_get_text((By.XPATH,
-                                            "//*[@id='ctl00_MainContent_TabContainer1_tabSelected_lblMsgBlock']/span"))
-                        
-                        if result_text == "加選成功":
-                            utils.log_info(f"✅ 成功加選課程: {class_id}")
-                            print("成功加選課程：" + class_id)
-                            class_ids.remove(class_id)
-                        else:
-                            utils.log_warning(f"❌ 課程 {class_id} 加選失敗: {result_text}")
-                            print(
-                                "課程" + class_id + ": 加選失敗, 請確認是否已加選或衝堂/超修, 也可能被其他機器人搶走了..")
+                            if not remain_pos == 0:
+                                utils.log_info(f"課程 {class_id} 有名額，嘗試加選...")
+                                driver_click((By.XPATH,
+                                              "//*[@id='ctl00_MainContent_TabContainer1_tabSelected_gvToAdd']/tbody/tr[2]/td[1]/input"))
+                                result_text = driver_get_text((By.XPATH,
+                                                    "//*[@id='ctl00_MainContent_TabContainer1_tabSelected_lblMsgBlock']/span"))
+                                
+                                if result_text == "加選成功":
+                                    utils.log_info(f"✅ 成功加選課程: {class_id}")
+                                    print("成功加選課程：" + class_id)
+                                    class_ids.remove(class_id)
+                                else:
+                                    utils.log_warning(f"❌ 課程 {class_id} 加選失敗: {result_text}")
+                                    print(
+                                        "課程" + class_id + ": 加選失敗, 請確認是否已加選或衝堂/超修, 也可能被其他機器人搶走了..")
+                            else:
+                                utils.log_info(f"課程 {class_id} 無剩餘名額，跳過...")
+                        except (ValueError, IndexError) as parse_error:
+                            utils.log_error(f"解析課程 {class_id} 名額資訊失敗: {parse_error}, Alert text: {alert_text}")
+                            utils.log_info(f"課程 {class_id} 跳過此次檢查...")
                     else:
-                        utils.log_info(f"課程 {class_id} 無剩餘名額，跳過...")
+                        utils.log_warning(f"課程 {class_id} 未收到名額資訊，跳過此次檢查...")
                     
                     # Small delay between course checks
                     time.sleep(0.5)
@@ -341,11 +382,23 @@ def auto_class(class_ids):
                 except Exception as e:
                     utils.log_error(f"處理課程 {class_id} 時發生錯誤: {e}")
                     print(f"Error processing class {class_id}: {e}")
+                    # Clean up any alerts before continuing
+                    utils.dismiss_any_alert(driver)
+                    # Try to refresh the page by clicking the tab
+                    try:
+                        driver_click((By.ID, "ctl00_MainContent_TabContainer1_tabSelected_Label3"))
+                        time.sleep(0.5)
+                    except:
+                        pass
                     continue  # Try next class
                     
         except Exception as e:
             utils.log_error(f"自動加課過程中發生嚴重錯誤: {e}")
             print(f"Critical error in auto_class: {e}")
+            
+            # Clean up any alerts before attempting recovery
+            utils.dismiss_any_alert(driver)
+            
             utils.log_info("嘗試重新啟動瀏覽器並重新登入...")
             print("Attempting to restart browser and re-login...")
             
