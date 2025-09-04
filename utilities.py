@@ -1,10 +1,56 @@
 """This python will handle some extra functions."""
 import sys
+import os
+import logging
+from datetime import datetime
 from os.path import exists
 
 import ddddocr
 import yaml
 from yaml import SafeLoader
+
+
+def setup_logger():
+    """Setup logger for the application."""
+    # Create logs directory if it doesn't exist
+    if not exists('./logs'):
+        os.makedirs('./logs')
+    
+    # Create a timestamp for the log file
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_filename = f'./logs/logs-{timestamp}.txt'
+    
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_filename, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)  # Also output to console
+        ]
+    )
+    
+    logger = logging.getLogger(__name__)
+    logger.info("=== FCU AutoClass 程式啟動 ===")
+    return logger
+
+
+def log_info(message):
+    """Log info message."""
+    logger = logging.getLogger(__name__)
+    logger.info(message)
+
+
+def log_error(message):
+    """Log error message."""
+    logger = logging.getLogger(__name__)
+    logger.error(message)
+
+
+def log_warning(message):
+    """Log warning message.""" 
+    logger = logging.getLogger(__name__)
+    logger.warning(message)
 
 
 def config_file_generator():
@@ -56,11 +102,20 @@ def read_config():
                 'class_ids': class_ids,
                 'headless': data['headless']
             }
+            # Don't log sensitive information like password, only basic info
+            print(f"設定檔讀取成功 - 使用者: {config['username']}, 課程數量: {len(class_ids)}")
             return config
-    except (KeyError, TypeError):
-        print(
-            "An error occurred while reading config.yml, please check if the file is corrected filled.\n"
-            "If the problem can't be solved, consider delete config.yml and restart the program.\n")
+    except (KeyError, TypeError) as e:
+        error_msg = (
+            "讀取 config.yml 時發生錯誤，請檢查檔案是否正確填寫。\n"
+            "如果問題無法解決，請考慮刪除 config.yml 並重新啟動程式。\n"
+        )
+        print(error_msg)
+        # Try to log error if logger is available
+        try:
+            log_error(f"設定檔讀取錯誤: {e}")
+        except:
+            pass
         sys.exit()
 
 
@@ -78,8 +133,14 @@ def get_ocr_answer(ocr_image_path):
 
     :rtype: str
     """
-    ocr = ddddocr.DdddOcr()
-    with open(ocr_image_path, 'rb') as f:
-        image = f.read()
-    answer = ocr.classification(image)
-    return answer
+    try:
+        log_info(f"開始 OCR 辨識圖片: {ocr_image_path}")
+        ocr = ddddocr.DdddOcr()
+        with open(ocr_image_path, 'rb') as f:
+            image = f.read()
+        answer = ocr.classification(image)
+        log_info(f"OCR 辨識完成，結果: {answer}")
+        return answer
+    except Exception as e:
+        log_error(f"OCR 辨識失敗: {e}")
+        return ""

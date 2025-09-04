@@ -1,0 +1,17 @@
+name: FCUbot
+channels:
+  - conda-forge
+dependencies:
+  # Choose a stable Python that matches wheels for your packages
+  - python=3.10
+
+  # Install from conda-forge when available (binary packages)
+  - pyyaml=6.0
+  - pillow=9.5.0
+  - pip
+
+  # Packages that are pip-only (or specific versions best via pip)
+  - pip:
+      - selenium==4.11.2
+      - webdriver-manager
+      - ddddocr~=1.4.7
